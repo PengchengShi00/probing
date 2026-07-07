@@ -44,7 +44,8 @@ _get_python_frames = _core._get_python_frames
 
 # Submodules with side effects (must be imported after Core Primitives)
 from probing.core.engine import load_extension, query
-from probing.tracing import event, span
+from probing.tracing import add_span_attribute_provider, event, span
+from probing import rl
 
 # 后台探测通过 import_hook 的 register 机制触发（见 add_module_callback）
 _detection_started = False
@@ -129,4 +130,6 @@ __all__ = [
     "load_extension",
     "span",
     "event",
+    "rl",
+    "add_span_attribute_provider",
 ]

@@ -5,6 +5,7 @@ mod app;
 mod components;
 mod hooks;
 mod pages;
+mod rl_contract;
 mod state;
 mod utils;
 

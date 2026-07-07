@@ -7,6 +7,7 @@ pub mod config;
 pub mod error;
 pub mod extension_handler;
 pub mod file_api;
+pub mod local_query;
 
 pub mod middleware;
 pub mod profiling;
@@ -174,7 +175,10 @@ pub async fn remote_server(addr: Option<String>) -> Result<()> {
 
 pub fn start_remote(addr: Option<String>) {
     SERVER_RUNTIME.spawn(async move {
-        let _ = remote_server(addr).await;
+        if let Err(err) = remote_server(addr).await {
+            log::error!("Failed to start remote server: {err}");
+            eprintln!("Failed to start remote server: {err}");
+        }
     });
     spawn_pulsing_sync();
 }
@@ -192,20 +196,32 @@ fn spawn_pulsing_sync() {
 
 pub fn sync_env_settings() {
     // Collect environment variables before spawning the async task
-    let env_vars: Vec<(String, String)> = std::env::vars()
-        .filter(|(k, _)| {
-            k.starts_with("PROBING_")
+    let mut env_vars: Vec<(String, String)> = std::env::vars()
+        .filter_map(|(k, v)| {
+            if k == "PROBING_PORT" {
+                if v.eq_ignore_ascii_case("RANDOM") {
+                    return None;
+                }
+                return Some((
+                    "PROBING_SERVER_ADDRESS".to_string(),
+                    format!("'0.0.0.0:{v}'"),
+                ));
+            }
+
+            (k.starts_with("PROBING_")
                 && ![
-                    "PROBING_PORT",
                     "PROBING_LOGLEVEL",
                     "PROBING_ASSETS_ROOT",
                     "PROBING_SERVER_ADDRPATTERN",
                     "PROBING_AUTH_TOKEN", // Skip syncing the auth token for security reasons
                     "PROBING_BASE_PATH",  // Used by server at startup, not a runtime setting
+                    "PROBING_ORIGINAL",   // Internal activation state, not a runtime setting
                 ]
-                .contains(&k.as_str())
+                .contains(&k.as_str()))
+            .then_some((k, v))
         })
         .collect();
+    env_vars.sort_by_key(|(k, _)| if k == "PROBING_SERVER_ADDRESS" { 1 } else { 0 });
 
     // Spawn the task onto the existing Tokio runtime
     SERVER_RUNTIME.spawn(async move {

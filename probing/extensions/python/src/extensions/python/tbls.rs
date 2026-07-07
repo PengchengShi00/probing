@@ -1,14 +1,16 @@
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use anyhow::Result;
 
+use async_trait::async_trait;
 use log::error;
 use probing_core::core::LazyTableSource;
 use probing_core::core::{
-    ArrayRef, CustomNamespace, DataType, Field, Float64Array, Int64Array, NamespacePluginHelper,
-    RecordBatch, Schema, SchemaRef, StringArray,
+    ArrayRef, CustomNamespace, DataFusionResult, DataType, Field, Float64Array, Int64Array,
+    NamespacePluginHelper, RecordBatch, Schema, SchemaRef, StringArray, TableProvider,
 };
 use probing_proto::prelude::CallFrame;
 use pyo3::types::PyAnyMethods;
@@ -162,6 +164,7 @@ impl PythonNamespace {
 
 }
 
+#[async_trait]
 impl CustomNamespace for PythonNamespace {
     fn name() -> &'static str {
         "python"
@@ -220,6 +223,18 @@ impl CustomNamespace for PythonNamespace {
             schema,
             data,
         })
+    }
+
+    async fn table(expr: String) -> DataFusionResult<Option<Arc<dyn TableProvider>>> {
+        if expr == "backtrace" {
+            return Ok(Some(Self::make_lazy(&expr)));
+        }
+        // Extern tables such as `trace_event` are mmap-backed. Bare identifiers
+        // are not valid Python expressions; avoid synthesizing `unknown_fields`.
+        if !expr.contains('.') && !expr.contains('(') && !expr.contains('[') {
+            return Ok(None);
+        }
+        Ok(Some(Self::make_lazy(&expr)))
     }
 }
 

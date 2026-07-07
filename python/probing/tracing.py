@@ -38,6 +38,7 @@ Implicit name decorator::
 
 import functools
 import inspect
+import contextvars
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -47,12 +48,44 @@ from probing import _core
 try:
     Span = _core.Span
     span_raw = _core._span_raw
-    current_span = _core.current_span
 except AttributeError:
     Span = None
     span_raw = None
-    current_span = lambda: None
 from probing.core.table import table
+
+_current_span_var = contextvars.ContextVar("probing_current_span", default=None)
+_span_attribute_providers = []
+
+
+def add_span_attribute_provider(provider: Callable[[], dict]) -> None:
+    """Register a runtime provider for attributes attached to every new span."""
+    if provider not in _span_attribute_providers:
+        _span_attribute_providers.append(provider)
+
+
+def _with_runtime_span_attributes(attrs: dict) -> dict:
+    """Merge runtime span attributes without overriding explicit user attributes."""
+    merged = dict(attrs)
+    for provider in list(_span_attribute_providers):
+        try:
+            provided = provider()
+        except Exception:
+            continue
+        if not provided:
+            continue
+        for key, value in provided.items():
+            if key not in merged and value is not None:
+                merged[key] = value
+    return merged
+
+
+def current_span():
+    """Return the active span for the current Python context.
+
+    This uses contextvars instead of the Rust thread-local stack so asyncio tasks
+    keep independent span parents while sharing the same OS thread.
+    """
+    return _current_span_var.get()
 
 
 def _get_location() -> Optional[str]:
@@ -178,9 +211,7 @@ def span(*args, **kwargs):
         def decorator(func: Callable) -> Callable:
             @functools.wraps(func)
             def wrapper(*wargs, **wkwargs):
-                # Get location from the decorator's call site
-                loc = _get_location()
-                with span_raw(func.__name__, kind=kind, location=loc) as s:
+                with span(func.__name__, kind=kind) as s:
                     return func(*wargs, **wkwargs)
 
             return wrapper
@@ -193,9 +224,7 @@ def span(*args, **kwargs):
 
         @functools.wraps(func)
         def wrapper(*wargs, **wkwargs):
-            # Get location from the decorator's call site
-            loc = _get_location()
-            with span_raw(func.__name__, kind=kind, location=loc) as s:
+            with span(func.__name__, kind=kind) as s:
                 return func(*wargs, **wkwargs)
 
         return wrapper
@@ -218,6 +247,7 @@ def span(*args, **kwargs):
                 self.location = location
                 self.attrs = attrs
                 self._span = None
+                self._token = None
 
             def __call__(self, func: Callable) -> Callable:
                 """Enable decorator form when a name was provided.
@@ -235,17 +265,12 @@ def span(*args, **kwargs):
 
                 @functools.wraps(func)
                 def wrapper(*wargs, **wkwargs):
-                    loc = _get_location()
-                    if self.attrs:
-                        with span(
-                            self.name,
-                            kind=self.kind,
-                            **self.attrs,
-                        ) as s:
-                            return func(*wargs, **wkwargs)
-                    else:
-                        with span_raw(self.name, kind=self.kind, location=loc) as s:
-                            return func(*wargs, **wkwargs)
+                    with span(
+                        self.name,
+                        kind=self.kind,
+                        **self.attrs,
+                    ) as s:
+                        return func(*wargs, **wkwargs)
 
                 return wrapper
 
@@ -259,6 +284,7 @@ def span(*args, **kwargs):
                 """
                 parent = current_span()
                 loc = self.location or _get_location()
+                attrs = _with_runtime_span_attributes(self.attrs)
 
                 if parent:
                     self._span = Span.new_child(
@@ -267,8 +293,8 @@ def span(*args, **kwargs):
                 else:
                     self._span = Span(self.name, kind=self.kind, location=loc)
 
-                if self.attrs:
-                    attrs_dict = dict(self.attrs)
+                if attrs:
+                    attrs_dict = dict(attrs)
                     if hasattr(self._span, "_set_initial_attrs"):
                         try:
                             self._span._set_initial_attrs(attrs_dict)
@@ -277,17 +303,25 @@ def span(*args, **kwargs):
 
                             warnings.warn(f"Failed to set initial attributes: {e}")
 
-                self._span.__enter__()
-                _record_span_start(self._span, self.attrs)
+                self._token = _current_span_var.set(self._span)
+                _record_span_start(self._span, attrs)
 
                 return self._span
 
             def __exit__(self, *args):
                 """Exit span context: finalize then record minimal end info."""
                 if self._span:
-                    result = self._span.__exit__(*args)
-                    _record_span_end(self._span)
-                    return result
+                    try:
+                        if args and args[0] is not None and hasattr(self._span, "end_error"):
+                            self._span.end_error(str(args[1]) if len(args) > 1 else None)
+                        elif hasattr(self._span, "end"):
+                            self._span.end()
+                        _record_span_end(self._span)
+                    finally:
+                        if self._token is not None:
+                            _current_span_var.reset(self._token)
+                            self._token = None
+                    return False
                 return False
 
         return SpanWrapper(name, kind, location, kwargs)
@@ -305,8 +339,9 @@ def span(*args, **kwargs):
         else:
             span_obj = Span(name, kind=kind, location=loc)
 
-        if kwargs:
-            attrs_dict = dict(kwargs)
+        attrs = _with_runtime_span_attributes(kwargs)
+        if attrs:
+            attrs_dict = dict(attrs)
             if hasattr(span_obj, "_set_initial_attrs"):
                 span_obj._set_initial_attrs(attrs_dict)
 
@@ -355,24 +390,30 @@ def _record_span_start(span: Span, attrs: dict):
 
 
 def _record_span_end(span: Span):
-    """Persist span end with minimal data (only end time + span id).
-
-    Other fields are blanked to reduce duplication.
-    """
+    """Persist span end with enough identity to match the corresponding start."""
+    import json
     import time
 
     end_ts = span.end_timestamp or int(time.time_ns())
+    attrs_json = ""
+    if hasattr(span, "get_attributes"):
+        try:
+            attrs = span.get_attributes()
+            if attrs:
+                attrs_json = json.dumps(attrs)
+        except Exception:
+            attrs_json = ""
     event = TraceEvent(
         record_type="span_end",
-        trace_id=0,
+        trace_id=span.trace_id,
         span_id=span.span_id,
         name="",
         time=end_ts,
         thread_id=getattr(span, "thread_id", 0),
-        parent_id=-1,
-        kind="",
-        location="",
-        attributes="",
+        parent_id=span.parent_id if span.parent_id is not None else -1,
+        kind=span.kind if span.kind is not None else "",
+        location=span.location if hasattr(span, "location") and span.location is not None else "",
+        attributes=attrs_json,
         event_attributes="",
     )
     event.save()

@@ -197,6 +197,23 @@ pub struct ExternBacking {
     table: Option<ExposedTable>,
 }
 
+fn default_ele_for_column(name: &str) -> Ele {
+    let lower = name.to_ascii_lowercase();
+    if matches!(
+        lower.as_str(),
+        "time" | "pid" | "id" | "lineno" | "depth" | "step" | "attempt"
+    ) || lower.ends_with("_id")
+        || lower.ends_with("_ns")
+        || lower.ends_with("_timestamp")
+        || lower == "timestamp"
+        || lower == "timestamp_ns"
+    {
+        Ele::I64(0)
+    } else {
+        Ele::Text(String::new())
+    }
+}
+
 impl ExternBacking {
     fn new(name: &str, columns: Vec<String>, capacity_bytes: usize) -> Self {
         Self {
@@ -206,6 +223,21 @@ impl ExternBacking {
             dtypes: vec![],
             table: None,
         }
+    }
+
+    /// Create the on-disk mmap ring as soon as the table is registered so SQL
+    /// queries (e.g. `python.trace_event`) see the real column schema even
+    /// before the first row is appended.
+    fn ensure_mmap_created(&mut self) -> Result<(), String> {
+        if self.table.is_some() {
+            return Ok(());
+        }
+        let defaults: Vec<Ele> = self
+            .columns
+            .iter()
+            .map(|column| default_ele_for_column(column))
+            .collect();
+        self.ensure_table(&defaults)
     }
 
     fn ensure_table(&mut self, first_row: &[Ele]) -> Result<(), String> {
@@ -325,7 +357,13 @@ impl ExternalTable {
         discard_strategy: &str,
     ) -> Arc<Mutex<ExternBacking>> {
         let capacity = ring_capacity_bytes(discard_threshold, discard_strategy);
-        Arc::new(Mutex::new(ExternBacking::new(name, columns, capacity)))
+        let backing = Arc::new(Mutex::new(ExternBacking::new(name, columns, capacity)));
+        if let Ok(mut guard) = backing.lock() {
+            if let Err(err) = guard.ensure_mmap_created() {
+                log::warn!("failed to create mmap table {name}: {err}");
+            }
+        }
+        backing
     }
 }
 
@@ -580,6 +618,106 @@ probing.ExternalTable.drop("table_to_drop")
             let binding = EXTERN_TABLES.lock().unwrap();
             assert!(!binding.contains_key("table_to_drop"));
         });
+    }
+
+    #[test]
+    fn test_mmap_created_on_registration_before_append() {
+        setup();
+        let _table = ExternalTable::new(
+            "trace_event",
+            vec![
+                "record_type".to_string(),
+                "trace_id".to_string(),
+                "span_id".to_string(),
+                "parent_id".to_string(),
+                "name".to_string(),
+                "time".to_string(),
+                "thread_id".to_string(),
+                "kind".to_string(),
+                "location".to_string(),
+                "attributes".to_string(),
+                "event_attributes".to_string(),
+            ],
+            10000,
+            1_000_000,
+            "BaseMemorySize".to_string(),
+        );
+
+        let path = probing_memtable::discover::default_dir()
+            .join(std::process::id().to_string())
+            .join("python.trace_event");
+        assert!(path.is_file(), "mmap file should exist before append: {path:?}");
+    }
+
+    #[test]
+    fn test_query_trace_event_schema_before_append() {
+        setup();
+        Python::with_gil(|py| {
+            py.run(
+                c_str!(
+                    r#"
+import probing
+probing.ExternalTable.get_or_create(
+    "trace_event",
+    [
+        "record_type",
+        "trace_id",
+        "span_id",
+        "parent_id",
+        "name",
+        "time",
+        "thread_id",
+        "kind",
+        "location",
+        "attributes",
+        "event_attributes",
+    ],
+)
+"#
+                ),
+                None,
+                None,
+            )
+            .unwrap();
+        });
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .enable_all()
+            .build()
+            .unwrap();
+        let engine = rt.block_on(engine_with_python());
+        let df = rt.block_on(async {
+            engine
+                .async_query(
+                    r#"
+                    SELECT
+                        record_type,
+                        trace_id,
+                        span_id,
+                        COALESCE(parent_id, -1) as parent_id,
+                        name,
+                        time as timestamp,
+                        COALESCE(thread_id, 0) as thread_id,
+                        kind,
+                        location,
+                        attributes,
+                        event_attributes
+                    FROM python.trace_event
+                    ORDER BY timestamp DESC
+                    LIMIT 10
+                    "#,
+                )
+                .await
+                .unwrap()
+        });
+        let df = df.expect("trace_event should be queryable before any append");
+        assert_eq!(df.len(), 0, "expected zero rows before append");
+        assert!(
+            df.names.iter().any(|name| name == "record_type"),
+            "expected trace_event columns, got {:?}",
+            df.names
+        );
     }
 
     #[test]

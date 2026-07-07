@@ -1,4 +1,4 @@
-//! Sidebar: logo, nav list, Profiling submenu, footer.
+//! Sidebar: logo, RL observability nav, tools, advanced submenu.
 //! Uses [colors](crate::components::colors). Width/visibility in [state::sidebar](crate::state::sidebar).
 
 use dioxus::prelude::*;
@@ -9,10 +9,12 @@ use crate::components::colors::colors;
 use crate::components::icon::Icon;
 use crate::state::sidebar::{load_sidebar_state, save_sidebar_state, SIDEBAR_HIDDEN, SIDEBAR_WIDTH};
 
+mod advanced;
 mod nav_item;
 mod profiling;
 mod resize;
 
+use advanced::AdvancedSidebarItem;
 use nav_item::SidebarNavItem;
 use profiling::ProfilingSidebarItem;
 use resize::ResizeHandle;
@@ -41,10 +43,12 @@ fn sidebar_classes() -> (String, String, String, String, String, String) {
     )
 }
 
+
 #[component]
 pub fn Sidebar() -> Element {
     let route = use_route::<Route>();
     let show_profiling_dropdown = use_signal(|| false);
+    let show_advanced_dropdown = use_signal(|| false);
 
     use_effect(move || {
         load_sidebar_state();
@@ -53,6 +57,10 @@ pub fn Sidebar() -> Element {
     let width = *SIDEBAR_WIDTH.read();
     let (aside, logo_border, brand, footer, footer_link, hide_btn) = sidebar_classes();
     let main_style = format!("width: {}px;", width);
+    let section_label = format!(
+        "px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-{}",
+        colors::SIDEBAR_TEXT_MUTED
+    );
 
     rsx! {
         div {
@@ -64,7 +72,7 @@ pub fn Sidebar() -> Element {
                 div {
                     class: "{logo_border}",
                     Link {
-                        to: Route::DashboardPage {},
+                        to: Route::RolloutPage {},
                         class: "flex items-center gap-2",
                         img { src: "{crate::utils::base_path::with_base(\"/assets/logo.svg\")}", alt: "Probing", class: "w-7 h-7 flex-shrink-0" }
                         span { class: "{brand}", "Probing" }
@@ -74,20 +82,48 @@ pub fn Sidebar() -> Element {
                 nav {
                     class: "flex-1 overflow-y-auto py-3",
                     div { class: "px-2 space-y-0.5",
+                        div { class: "{section_label}", "RL" }
                         SidebarNavItem {
-                            to: Route::DashboardPage {},
+                            to: Route::RolloutPage {},
+                            icon: &icondata::AiDeploymentUnitOutlined,
+                            label: "Rollout",
+                            is_active: matches!(route, Route::RolloutPage {} | Route::TracesPage {}),
+                        }
+                        SidebarNavItem {
+                            to: Route::TrainPage {},
                             icon: &icondata::AiLineChartOutlined,
-                            label: "Dashboard",
-                            is_active: route == Route::DashboardPage {},
+                            label: "Train",
+                            is_active: route == Route::TrainPage {},
+                        }
+                        SidebarNavItem {
+                            to: Route::SpansPage {},
+                            icon: &icondata::AiApartmentOutlined,
+                            label: "Spans",
+                            is_active: route == Route::SpansPage {},
+                        }
+                        SidebarNavItem {
+                            to: Route::ProcessTimelinePage {},
+                            icon: &icondata::AiClockCircleOutlined,
+                            label: "Process Timeline",
+                            is_active: route == Route::ProcessTimelinePage {},
+                        }
+                        SidebarNavItem {
+                            to: Route::PerfettoPage {},
+                            icon: &icondata::AiThunderboltOutlined,
+                            label: "Perfetto",
+                            is_active: route == Route::PerfettoPage {},
+                        }
+
+                        div { class: "pt-3" }
+                        div { class: "{section_label}", "Tools" }
+                        ProfilingSidebarItem {
+                            show_dropdown: show_profiling_dropdown,
                         }
                         SidebarNavItem {
                             to: Route::StackPage {},
                             icon: &icondata::AiThunderboltOutlined,
                             label: "Stacks",
                             is_active: route == Route::StackPage {},
-                        }
-                        ProfilingSidebarItem {
-                            show_dropdown: show_profiling_dropdown,
                         }
                         SidebarNavItem {
                             to: Route::AnalyticsPage {},
@@ -96,29 +132,15 @@ pub fn Sidebar() -> Element {
                             is_active: route == Route::AnalyticsPage {},
                         }
                         SidebarNavItem {
-                            to: Route::TracesPage {},
-                            icon: &icondata::AiApiOutlined,
-                            label: "Traces",
-                            is_active: route == Route::TracesPage {},
-                        }
-                        SidebarNavItem {
                             to: Route::PulsingPage {},
-                            icon: &icondata::AiDeploymentUnitOutlined,
+                            icon: &icondata::AiApiOutlined,
                             label: "Pulsing",
                             is_active: route == Route::PulsingPage {},
                         }
-                        div { class: "pt-2" }
-                        SidebarNavItem {
-                            to: Route::ClusterPage {},
-                            icon: &icondata::AiClusterOutlined,
-                            label: "Cluster",
-                            is_active: route == Route::ClusterPage {},
-                        }
-                        SidebarNavItem {
-                            to: Route::PythonPage {},
-                            icon: &icondata::SiPython,
-                            label: "Python",
-                            is_active: route == Route::PythonPage {},
+
+                        div { class: "pt-3" }
+                        AdvancedSidebarItem {
+                            show_dropdown: show_advanced_dropdown,
                         }
                     }
                 }

@@ -50,6 +50,8 @@ pub use datafusion::arrow::datatypes::SchemaRef;
 pub use datafusion::arrow::datatypes::TimeUnit;
 pub use datafusion::arrow::util::pretty;
 pub use datafusion::common::error::DataFusionError;
+pub use datafusion::catalog::TableProvider;
+pub use datafusion::error::Result as DataFusionResult;
 pub use datafusion::config::CatalogOptions;
 
 // pub static ENGINE_RUNTIME: Lazy<tokio::runtime::Runtime> = Lazy::new(|| {

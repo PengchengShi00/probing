@@ -3498,6 +3498,8 @@ dependencies = [
  "datafusion",
  "futures-util",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "include_dir",
  "log",
  "nix 0.30.1",
