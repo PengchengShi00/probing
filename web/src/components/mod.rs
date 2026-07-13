@@ -24,6 +24,7 @@ pub mod dataframe_view;
 pub mod data;
 pub mod icon;
 pub mod layout;
+pub mod metrics_line_chart;
 pub mod page;
 pub mod sidebar;
 pub mod table_view;

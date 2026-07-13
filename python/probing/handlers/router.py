@@ -95,6 +95,18 @@ def _parse_param(value: str, param_type: str) -> Any:
         return value
 
 
+def _infer_param_defaults(func: Callable) -> Dict[str, Any]:
+    """Infer default parameter values from function signature."""
+    sig = inspect.signature(func)
+    defaults: Dict[str, Any] = {}
+    for param_name, param in sig.parameters.items():
+        if param_name == "self":
+            continue
+        if param.default != inspect.Parameter.empty:
+            defaults[param_name] = param.default
+    return defaults
+
+
 def _parse_params(
     params: Dict[str, str], handler_info: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], Optional[str]]:
@@ -149,6 +161,7 @@ def _parse_params(
     parsed = {}
     required_params = handler_info.get("required_params", [])
     param_types = handler_info.get("param_types", {})
+    param_defaults = handler_info.get("param_defaults", {})
 
     # Check required parameters
     for param_name in required_params:
@@ -163,7 +176,10 @@ def _parse_params(
             except (ValueError, TypeError) as e:
                 return {}, f"Invalid parameter '{param_name}': {str(e)}"
         elif param_type in ("optional_string", "optional_int", "optional_i64"):
-            parsed[param_name] = None
+            if param_name in param_defaults:
+                parsed[param_name] = param_defaults[param_name]
+            else:
+                parsed[param_name] = None
         elif param_name in required_params:
             return {}, f"Missing required parameter: {param_name}"
 
@@ -430,6 +446,7 @@ def ext_handler(
 
         # Auto-infer parameter types and required params
         param_types = _infer_param_types(func)
+        param_defaults = _infer_param_defaults(func)
         required = required_params or _infer_required_params(func)
 
         # Register handler
@@ -437,6 +454,7 @@ def ext_handler(
             "function": func,
             "required_params": required,
             "param_types": param_types,
+            "param_defaults": param_defaults,
         }
 
         # Register aliases

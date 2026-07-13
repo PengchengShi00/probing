@@ -63,6 +63,7 @@ impl ApiClient {
 mod analytics;
 mod cluster;
 mod dashboard;
+mod engines;
 mod profiling;
 mod pulsing;
 mod pytorch;
@@ -77,6 +78,8 @@ pub use analytics::*;
 pub use cluster::*;
 #[allow(unused_imports)]
 pub use dashboard::*;
+#[allow(unused_imports)]
+pub use engines::*;
 #[allow(unused_imports)]
 pub use profiling::*;
 #[allow(unused_imports)]

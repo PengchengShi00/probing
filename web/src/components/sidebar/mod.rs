@@ -113,6 +113,12 @@ pub fn Sidebar() -> Element {
                             label: "Perfetto",
                             is_active: route == Route::PerfettoPage {},
                         }
+                        SidebarNavItem {
+                            to: Route::InferencePage {},
+                            icon: &icondata::AiDashboardOutlined,
+                            label: "Inference",
+                            is_active: route == Route::InferencePage {},
+                        }
 
                         div { class: "pt-3" }
                         div { class: "{section_label}", "Tools" }

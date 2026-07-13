@@ -201,6 +201,27 @@ fn default_ele_for_column(name: &str) -> Ele {
     let lower = name.to_ascii_lowercase();
     if matches!(
         lower.as_str(),
+        "engine_id" | "engine_type" | "metric_name" | "labels" | "framework" | "status"
+            | "router_addr" | "metrics_url" | "message" | "error"
+    ) || lower.ends_with("_name")
+        || lower.ends_with("_type")
+        || lower.ends_with("_url")
+        || lower.ends_with("_addr")
+    {
+        return Ele::Text(String::new());
+    }
+    if matches!(lower.as_str(), "metric_value" | "value")
+        || lower.ends_with("_value")
+        || lower.ends_with("_ratio")
+        || lower.ends_with("_ms")
+        || lower.ends_with("_tps")
+        || lower.ends_with("_bytes")
+        || lower.ends_with("_seconds")
+    {
+        return Ele::F64(0.0);
+    }
+    if matches!(
+        lower.as_str(),
         "time" | "pid" | "id" | "lineno" | "depth" | "step" | "attempt"
     ) || lower.ends_with("_id")
         || lower.ends_with("_ns")
@@ -498,6 +519,14 @@ mod tests {
     use crate::extensions::python::PythonPlugin;
     use probing_core::core::{Engine, UnifiedMemtablePlugin};
     use pyo3::ffi::c_str;
+
+    #[test]
+    fn default_ele_for_column_treats_inference_metric_columns_as_expected() {
+        assert!(matches!(default_ele_for_column("engine_id"), Ele::Text(_)));
+        assert!(matches!(default_ele_for_column("metric_value"), Ele::F64(_)));
+        assert!(matches!(default_ele_for_column("timestamp_ns"), Ele::I64(_)));
+        assert!(matches!(default_ele_for_column("span_id"), Ele::I64(_)));
+    }
 
     /// Route all mmap files of this test process into one tempdir.
     static TEST_DATA_DIR: Lazy<tempfile::TempDir> = Lazy::new(|| {

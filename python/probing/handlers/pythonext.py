@@ -593,6 +593,128 @@ def get_trace_variables(function: Optional[str] = None, limit: int = 100) -> str
         return json.dumps({"error": str(e)})
 
 
+@ext_handler(
+    "pythonext",
+    [
+        "engines/register",
+        "pythonext/engines/register",
+    ],
+)
+def register_inference_engine(
+    router_addr: str,
+    engine_id: str = "sglang-router",
+    engine_type: str = "sglang",
+    framework: str = "slime",
+    metrics_path: str = "/engine_metrics",
+) -> str:
+    """Register an inference engine metrics endpoint.
+
+    ``metrics_path`` defaults to ``/engine_metrics`` (Slime router / model gateway).
+    For ``sglang.launch_server`` with ``--enable-metrics``, use ``/metrics``.
+    """
+
+    from probing.ext.engines import register_engine, scrape_engine
+
+    registration = register_engine(
+        router_addr=router_addr,
+        engine_id=engine_id,
+        engine_type=engine_type,
+        framework=framework,
+        metrics_path=metrics_path,
+    )
+    snapshot = scrape_engine(registration)
+    return json.dumps(
+        {
+            "engine": registration.to_dict(),
+            "snapshot": snapshot,
+        }
+    )
+
+
+@ext_handler(
+    "pythonext",
+    [
+        "engines/register_slime",
+        "pythonext/engines/register_slime",
+    ],
+)
+def register_slime_inference_engine(
+    router_addr: str,
+    engine_id: str = "sglang-router",
+    framework: str = "slime",
+) -> str:
+    """Register Slime ``get_metrics_router_addr()`` for SGLang scraping."""
+
+    from probing.ext.engines import register_slime_sglang_router, scrape_engine
+
+    registration = register_slime_sglang_router(
+        router_addr,
+        engine_id=engine_id,
+        framework=framework,
+    )
+    if registration is None:
+        return json.dumps({"error": "router_addr is required"})
+    snapshot = scrape_engine(registration)
+    return json.dumps(
+        {
+            "engine": registration.to_dict(),
+            "snapshot": snapshot,
+        }
+    )
+
+
+@ext_handler(
+    "pythonext",
+    [
+        "engines/list",
+        "pythonext/engines/list",
+    ],
+)
+def list_inference_engines() -> str:
+    from probing.ext.engines import list_engines
+
+    return json.dumps({"engines": [engine.to_dict() for engine in list_engines()]})
+
+
+@ext_handler(
+    "pythonext",
+    [
+        "engines/scrape",
+        "pythonext/engines/scrape",
+    ],
+)
+def scrape_inference_engines(engine_id: Optional[str] = None) -> str:
+    from probing.ext.engines import scrape_all, scrape_engine
+    from probing.ext.engines.registry import get_engine
+
+    if engine_id:
+        registration = get_engine(engine_id)
+        if registration is None:
+            return json.dumps({"error": f"engine not found: {engine_id}"})
+        return json.dumps({"results": [scrape_engine(registration)]})
+    return json.dumps({"results": scrape_all()})
+
+
+@ext_handler(
+    "pythonext",
+    [
+        "engines/snapshot",
+        "pythonext/engines/snapshot",
+    ],
+)
+def inference_engine_snapshot(engine_id: Optional[str] = None) -> str:
+    from probing.ext.engines import list_engines
+
+    engines = list_engines()
+    if engine_id:
+        engines = [engine for engine in engines if engine.engine_id == engine_id]
+    return json.dumps(
+        {
+            "engines": [engine.to_dict() for engine in engines],
+        }
+    )
+
+
 # Unified entry point for all handlers
 def handle_api_request(path: str, params: Dict[str, str]) -> str:
     """Unified entry point for handling API requests.

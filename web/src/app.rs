@@ -9,7 +9,7 @@ use dioxus_router::{Routable, Router};
 use crate::components::layout::AppLayout;
 use crate::pages::{
     analytics::Analytics, chrome_tracing::ChromeTracing, cluster::Cluster, dashboard::Dashboard,
-    profiling::Profiling, pulsing::Pulsing, python::Python, stack::Stack,
+    inference::Inference, profiling::Profiling, pulsing::Pulsing, python::Python, stack::Stack,
     traces::{RlObservability, RlViewMode, Traces},
 };
 
@@ -28,6 +28,8 @@ pub enum Route {
     ProcessTimelinePage {},
     #[route("/perfetto")]
     PerfettoPage {},
+    #[route("/inference")]
+    InferencePage {},
     #[route("/traces")]
     TracesPage {},
     #[route("/dashboard")]
@@ -78,6 +80,11 @@ pub fn PerfettoPage() -> Element {
             RlObservability { view: RlViewMode::Perfetto }
         }
     }
+}
+
+#[component]
+pub fn InferencePage() -> Element {
+    rsx! { AppLayout { Inference {} } }
 }
 
 #[component]
